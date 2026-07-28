@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "python-sql"
+version = "1.8.1.1"
+description = "Mojo-backed replacement for python-sql"
+requires-python = ">=3.12"
+dependencies = ["mojo>=0.26.2"]
+
+[project.optional-dependencies]
+benchmark = [
+    "testcontainers[postgres]>=4.0",
+    "psycopg[binary]>=3.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["sql"]
+artifacts = ["sql/_core.so"]
