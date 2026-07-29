@@ -890,6 +890,20 @@ class Lateral(FromItem):
         return getattr(self._from_item, name)
 
 
+def _normalize_with(value):
+    if value is not None:
+        if isinstance(value, With):
+            value = [value]
+        if any(not isinstance(item, With) for item in value):
+            raise ValueError("invalid with: %r" % (value,))
+    return value
+
+
+def _with_definition_handles(value):
+    return _handles(
+        tuple(item._definition() for item in (value or ())))
+
+
 class SelectQuery(Query, FromItem):
     """Common ORDER BY / LIMIT / OFFSET tail of the query statements."""
     __slots__ = ('_node_handle', '_order_by', '_limit', '_offset', '_with')
@@ -946,16 +960,10 @@ class SelectQuery(Query, FromItem):
 
     @with_.setter
     def with_(self, value):
-        if value is not None:
-            if isinstance(value, With):
-                value = [value]
-            if any(not isinstance(w, With) for w in value):
-                raise ValueError("invalid with: %r" % (value,))
-        self._with = value
+        self._with = _normalize_with(value)
 
     def _with_handles(self):
-        return _handles(
-            tuple(item._definition() for item in (self._with or ())))
+        return _with_definition_handles(self._with)
 
     def _limit_handle(self):
         return _NONE if self._limit is None else _param(self._limit)
@@ -1022,16 +1030,10 @@ class WithQuery(Query):
 
     @with_.setter
     def with_(self, value):
-        if value is not None:
-            if isinstance(value, With):
-                value = [value]
-            if any(not isinstance(w, With) for w in value):
-                raise ValueError("invalid with: %r" % (value,))
-        self._with = value
+        self._with = _normalize_with(value)
 
     def _with_handles(self):
-        return _handles(
-            tuple(item._definition() for item in (self._with or ())))
+        return _with_definition_handles(self._with)
 
     def _with_str(self):
         if not self.with_:
