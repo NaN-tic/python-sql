@@ -136,49 +136,26 @@ class NaryOperator(list, Operator):
             _OP_NARY, tuple(_operand(o) for o in self), 0, 0, self._operator)
 
 
-class And(NaryOperator):
-    __slots__ = ()
-    _operator = 'AND'
+def _define_operator(name, base, operator):
+    operator_type = type(name, (base,), {
+        '__module__': __name__,
+        '__slots__': (),
+        '_operator': operator,
+    })
+    globals()[name] = operator_type
+    return operator_type
+
+And = _define_operator('And', NaryOperator, 'AND')
+Or = _define_operator('Or', NaryOperator, 'OR')
+Not = _define_operator('Not', UnaryOperator, 'NOT')
+Neg = _define_operator('Neg', UnaryOperator, '-')
+Pos = _define_operator('Pos', UnaryOperator, '+')
 
 
-class Or(NaryOperator):
-    __slots__ = ()
-    _operator = 'OR'
-
-
-class Not(UnaryOperator):
-    __slots__ = ()
-    _operator = 'NOT'
-
-
-class Neg(UnaryOperator):
-    __slots__ = ()
-    _operator = '-'
-
-
-class Pos(UnaryOperator):
-    __slots__ = ()
-    _operator = '+'
-
-
-class Less(BinaryOperator):
-    __slots__ = ()
-    _operator = '<'
-
-
-class Greater(BinaryOperator):
-    __slots__ = ()
-    _operator = '>'
-
-
-class LessEqual(BinaryOperator):
-    __slots__ = ()
-    _operator = '<='
-
-
-class GreaterEqual(BinaryOperator):
-    __slots__ = ()
-    _operator = '>='
+Less = _define_operator('Less', BinaryOperator, '<')
+Greater = _define_operator('Greater', BinaryOperator, '>')
+LessEqual = _define_operator('LessEqual', BinaryOperator, '<=')
+GreaterEqual = _define_operator('GreaterEqual', BinaryOperator, '>=')
 
 
 class Equal(BinaryOperator):
@@ -200,9 +177,7 @@ class Equal(BinaryOperator):
         return _make(_OP_BINARY, (left, right), 0, 0, self._operator)
 
 
-class NotEqual(Equal):
-    __slots__ = ()
-    _operator = '!='
+NotEqual = _define_operator('NotEqual', Equal, '!=')
 
 
 class Between(Operator):
@@ -239,14 +214,9 @@ class NotBetween(Between):
     _operator = 'NOT BETWEEN'
 
 
-class IsDistinct(BinaryOperator):
-    __slots__ = ()
-    _operator = 'IS DISTINCT FROM'
-
-
-class IsNotDistinct(IsDistinct):
-    __slots__ = ()
-    _operator = 'IS NOT DISTINCT FROM'
+IsDistinct = _define_operator('IsDistinct', BinaryOperator, 'IS DISTINCT FROM')
+IsNotDistinct = _define_operator(
+    'IsNotDistinct', IsDistinct, 'IS NOT DISTINCT FROM')
 
 
 class Is(BinaryOperator):
@@ -276,29 +246,13 @@ class Is(BinaryOperator):
             _OP_IS, (_operand(self.left),), 0, 0, self._operator, words)
 
 
-class IsNot(Is):
-    __slots__ = ()
-    _operator = 'IS NOT'
+IsNot = _define_operator('IsNot', Is, 'IS NOT')
 
 
-class Add(BinaryOperator):
-    __slots__ = ()
-    _operator = '+'
-
-
-class Sub(BinaryOperator):
-    __slots__ = ()
-    _operator = '-'
-
-
-class Mul(BinaryOperator):
-    __slots__ = ()
-    _operator = '*'
-
-
-class Div(BinaryOperator):
-    __slots__ = ()
-    _operator = '/'
+Add = _define_operator('Add', BinaryOperator, '+')
+Sub = _define_operator('Sub', BinaryOperator, '-')
+Mul = _define_operator('Mul', BinaryOperator, '*')
+Div = _define_operator('Div', BinaryOperator, '/')
 
 
 # For backward compatibility
@@ -312,70 +266,19 @@ class FloorDiv(BinaryOperator):
         super(FloorDiv, self).__init__(left, right)
 
 
-class Mod(BinaryOperator):
-    __slots__ = ()
-    # The doubling required by the format paramstyle happens in the core.
-    _operator = '%'
-
-
-class Pow(BinaryOperator):
-    __slots__ = ()
-    _operator = '^'
-
-
-class SquareRoot(UnaryOperator):
-    __slots__ = ()
-    _operator = '|/'
-
-
-class CubeRoot(UnaryOperator):
-    __slots__ = ()
-    _operator = '||/'
-
-
-class Factorial(UnaryOperator):
-    __slots__ = ()
-    _operator = '!!'
-
-
-class Abs(UnaryOperator):
-    __slots__ = ()
-    _operator = '@'
-
-
-class BAnd(BinaryOperator):
-    __slots__ = ()
-    _operator = '&'
-
-
-class BOr(BinaryOperator):
-    __slots__ = ()
-    _operator = '|'
-
-
-class BXor(BinaryOperator):
-    __slots__ = ()
-    _operator = '#'
-
-
-class BNot(UnaryOperator):
-    __slots__ = ()
-    _operator = '~'
-
-
-class LShift(BinaryOperator):
-    __slots__ = ()
-    _operator = '<<'
-
-
-class RShift(BinaryOperator):
-    __slots__ = ()
-    _operator = '>>'
-
-
-class Concat(BinaryOperator):
-    __slots__ = ()
-    _operator = '||'
+Mod = _define_operator('Mod', BinaryOperator, '%')
+Pow = _define_operator('Pow', BinaryOperator, '^')
+SquareRoot = _define_operator('SquareRoot', UnaryOperator, '|/')
+CubeRoot = _define_operator('CubeRoot', UnaryOperator, '||/')
+Factorial = _define_operator('Factorial', UnaryOperator, '!!')
+Abs = _define_operator('Abs', UnaryOperator, '@')
+BAnd = _define_operator('BAnd', BinaryOperator, '&')
+BOr = _define_operator('BOr', BinaryOperator, '|')
+BXor = _define_operator('BXor', BinaryOperator, '#')
+BNot = _define_operator('BNot', UnaryOperator, '~')
+LShift = _define_operator('LShift', BinaryOperator, '<<')
+RShift = _define_operator('RShift', BinaryOperator, '>>')
+Concat = _define_operator('Concat', BinaryOperator, '||')
 
 
 class Like(BinaryOperator):
@@ -400,38 +303,17 @@ class Like(BinaryOperator):
         return _INVERT[self.__class__](self.left, self.right, self.escape)
 
 
-class NotLike(Like):
-    __slots__ = ()
-    _operator = 'NOT LIKE'
-
-
-class ILike(Like):
-    __slots__ = ()
-    # The core falls back to UPPER(...) LIKE UPPER(...) without Flavor.ilike.
-    _operator = 'ILIKE'
-
-
-class NotILike(ILike):
-    __slots__ = ()
-    _operator = 'NOT ILIKE'
+NotLike = _define_operator('NotLike', Like, 'NOT LIKE')
+# The core falls back to UPPER(...) LIKE UPPER(...) without Flavor.ilike.
+ILike = _define_operator('ILike', Like, 'ILIKE')
+NotILike = _define_operator('NotILike', ILike, 'NOT ILIKE')
 
 # TODO SIMILAR
 
 
-class In(BinaryOperator):
-    __slots__ = ()
-    _operator = 'IN'
-
-
-class NotIn(BinaryOperator):
-    __slots__ = ()
-    _operator = 'NOT IN'
-
-
-class Exists(UnaryOperator):
-    __slots__ = ()
-    _operator = 'EXISTS'
-
+In = _define_operator('In', BinaryOperator, 'IN')
+NotIn = _define_operator('NotIn', BinaryOperator, 'NOT IN')
+Exists = _define_operator('Exists', UnaryOperator, 'EXISTS')
 
 class _ArrayOperator(UnaryOperator):
     __slots__ = ()
@@ -445,17 +327,9 @@ class _ArrayOperator(UnaryOperator):
         return super()._handle()
 
 
-class Any(_ArrayOperator):
-    __slots__ = ()
-    _operator = 'ANY'
-
-
+Any = _define_operator('Any', _ArrayOperator, 'ANY')
 Some = Any
-
-
-class All(_ArrayOperator):
-    __slots__ = ()
-    _operator = 'ALL'
+All = _define_operator('All', _ArrayOperator, 'ALL')
 
 
 _INVERT = {
