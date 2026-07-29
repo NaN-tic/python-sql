@@ -104,6 +104,14 @@ def _normalize_expressions(value, name):
     return value
 
 
+def _define_leaf_type(name, base, **attributes):
+    return type(name, (base,), {
+        '__module__': __name__,
+        '__slots__': (),
+        **attributes,
+    })
+
+
 def _list(values):
     if not values:
         return _EMPTY
@@ -1130,12 +1138,7 @@ class Select(SelectQuery):
 
     @group_by.setter
     def group_by(self, value):
-        if value is not None:
-            if isinstance(value, Expression):
-                value = [value]
-            if any(not isinstance(col, Expression) for col in value):
-                raise ValueError("invalid group by: %r" % (value,))
-        self._group_by = value
+        self._group_by = _normalize_expressions(value, 'group by')
 
     @property
     def having(self):
@@ -1175,10 +1178,7 @@ class Select(SelectQuery):
     @distinct_on.setter
     def distinct_on(self, value):
         if value is not None:
-            if isinstance(value, Expression):
-                value = [value]
-            if any(not isinstance(col, Expression) for col in value):
-                raise ValueError("invalid distinct on: %r" % (value,))
+            value = _normalize_expressions(value, 'distinct on')
             self._distinct = True
         self._distinct_on = value
 
@@ -1304,16 +1304,10 @@ class CombiningQuery(SelectQuery):
         return _make(self._opcode, tuple(slots), flags, self._identity)
 
 
-class Union(CombiningQuery):
-    __slots__ = ()
-    _operator = 'UNION'
-    _opcode = OP_UNION
-
-
-class Intersect(CombiningQuery):
-    __slots__ = ()
-    _operator = 'INTERSECT'
-    _opcode = OP_INTERSECT
+Union = _define_leaf_type(
+    'Union', CombiningQuery, _operator='UNION', _opcode=OP_UNION)
+Intersect = _define_leaf_type(
+    'Intersect', CombiningQuery, _operator='INTERSECT', _opcode=OP_INTERSECT)
 
 
 class Interesect(Intersect):
@@ -1326,10 +1320,8 @@ class Interesect(Intersect):
         super().__init__(*args, **kwargs)
 
 
-class Except(CombiningQuery):
-    __slots__ = ()
-    _operator = 'EXCEPT'
-    _opcode = OP_EXCEPT
+Except = _define_leaf_type(
+    'Except', CombiningQuery, _operator='EXCEPT', _opcode=OP_EXCEPT)
 
 
 class Insert(WithQuery):
@@ -1728,14 +1720,9 @@ class MatchedUpdate(Matched):
         self.values = list(values)
 
 
-class MatchedDelete(Matched):
-    __slots__ = ()
-    _action = _C['MATCHED_ACTION_DELETE']
-
-
-class NotMatched(Matched):
-    __slots__ = ()
-    _not_matched = True
+MatchedDelete = _define_leaf_type(
+    'MatchedDelete', Matched, _action=_C['MATCHED_ACTION_DELETE'])
+NotMatched = _define_leaf_type('NotMatched', Matched, _not_matched=True)
 
 
 class NotMatchedInsert(NotMatched):
@@ -1796,9 +1783,7 @@ class Rollup(Expression):
         return self._expressions
 
 
-class Cube(Rollup):
-    __slots__ = ()
-    _opcode = OP_CUBE
+Cube = _define_leaf_type('Cube', Rollup, _opcode=OP_CUBE)
 
 
 class Window(Expression):
@@ -1921,14 +1906,8 @@ class Order(Expression):
             OP_ORDER, (expression._handle(),), 0, 0, self._sql)
 
 
-class Asc(Order):
-    __slots__ = ()
-    _sql = 'ASC'
-
-
-class Desc(Order):
-    __slots__ = ()
-    _sql = 'DESC'
+Asc = _define_leaf_type('Asc', Order, _sql='ASC')
+Desc = _define_leaf_type('Desc', Order, _sql='DESC')
 
 
 class NullOrder(Order):
