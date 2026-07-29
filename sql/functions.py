@@ -112,168 +112,36 @@ class FunctionNotCallable(Function):
             OP_FUNCTION_NOT_CALLABLE, (), 0, 0, self._sql_name(self))
 
 
-class Abs(Function):
-    __slots__ = ()
-    _function = 'ABS'
+def _define_functions(base, definitions):
+    for name, sql_name in definitions:
+        function_type = type(name, (base,), {
+            '__module__': __name__,
+            '__slots__': (),
+            '_function': sql_name,
+        })
+        globals()[name] = function_type
+_define_functions(Function, (
+    # Mathematical
+    ('Abs', 'ABS'), ('Cbrt', 'CBRT'), ('Ceil', 'CEIL'),
+    ('Degrees', 'DEGREES'), ('Div', 'DIV'), ('Exp', 'EXP'),
+    ('Floor', 'FLOOR'), ('Ln', 'LN'), ('Log', 'LOG'), ('Mod', 'MOD'),
+    ('Pi', 'PI'), ('Power', 'POWER'), ('Radians', 'RADIANS'),
+    ('Random', 'RANDOM'), ('Round', 'ROUND'), ('SetSeed', 'SETSEED'),
+    ('Sign', 'SIGN'), ('Sqrt', 'SQRT'), ('Trunc', 'TRUNC'),
+    ('WidthBucket', 'WIDTH_BUCKET'),
+    # Trigonometric
+    ('Acos', 'ACOS'), ('Asin', 'ASIN'), ('Atan', 'ATAN'),
+    ('Atan2', 'ATAN2'), ('Cos', 'Cos'), ('Cot', 'COT'), ('Sin', 'SIN'),
+    ('Tan', 'TAN'),
+    # String
+    ('BitLength', 'BIT_LENGTH'), ('CharLength', 'CHAR_LENGTH'),
+    ('Lower', 'LOWER'), ('OctetLength', 'OCTET_LENGTH'),
+))
 
-
-class Cbrt(Function):
-    __slots__ = ()
-    _function = 'CBRT'
-
-
-class Ceil(Function):
-    __slots__ = ()
-    _function = 'CEIL'
-
-
-class Degrees(Function):
-    __slots__ = ()
-    _function = 'DEGREES'
-
-
-class Div(Function):
-    __slots__ = ()
-    _function = 'DIV'
-
-
-class Exp(Function):
-    __slots__ = ()
-    _function = 'EXP'
-
-
-class Floor(Function):
-    __slots__ = ()
-    _function = 'FLOOR'
-
-
-class Ln(Function):
-    __slots__ = ()
-    _function = 'LN'
-
-
-class Log(Function):
-    __slots__ = ()
-    _function = 'LOG'
-
-
-class Mod(Function):
-    __slots__ = ()
-    _function = 'MOD'
-
-
-class Pi(Function):
-    __slots__ = ()
-    _function = 'PI'
-
-
-class Power(Function):
-    __slots__ = ()
-    _function = 'POWER'
-
-
-class Radians(Function):
-    __slots__ = ()
-    _function = 'RADIANS'
-
-
-class Random(Function):
-    __slots__ = ()
-    _function = 'RANDOM'
-
-
-class Round(Function):
-    __slots__ = ()
-    _function = 'ROUND'
-
-
-class SetSeed(Function):
-    __slots__ = ()
-    _function = 'SETSEED'
-
-
-class Sign(Function):
-    __slots__ = ()
-    _function = 'SIGN'
-
-
-class Sqrt(Function):
-    __slots__ = ()
-    _function = 'SQRT'
-
-
-class Trunc(Function):
-    __slots__ = ()
-    _function = 'TRUNC'
-
-
-class WidthBucket(Function):
-    __slots__ = ()
-    _function = 'WIDTH_BUCKET'
 
 # Trigonometric
 
 
-class Acos(Function):
-    __slots__ = ()
-    _function = 'ACOS'
-
-
-class Asin(Function):
-    __slots__ = ()
-    _function = 'ASIN'
-
-
-class Atan(Function):
-    __slots__ = ()
-    _function = 'ATAN'
-
-
-class Atan2(Function):
-    __slots__ = ()
-    _function = 'ATAN2'
-
-
-class Cos(Function):
-    __slots__ = ()
-    _function = 'Cos'
-
-
-class Cot(Function):
-    __slots__ = ()
-    _function = 'COT'
-
-
-class Sin(Function):
-    __slots__ = ()
-    _function = 'SIN'
-
-
-class Tan(Function):
-    __slots__ = ()
-    _function = 'TAN'
-
-# String
-
-
-class BitLength(Function):
-    __slots__ = ()
-    _function = 'BIT_LENGTH'
-
-
-class CharLength(Function):
-    __slots__ = ()
-    _function = 'CHAR_LENGTH'
-
-
-class Lower(Function):
-    __slots__ = ()
-    _function = 'LOWER'
-
-
-class OctetLength(Function):
-    __slots__ = ()
-    _function = 'OCTET_LENGTH'
 
 
 class Overlay(FunctionKeyword):
@@ -323,65 +191,17 @@ class Trim(Function):
             OP_TRIM, tuple(kids), 0, 0, self._sql_name(self), self.position)
 
 
-class Upper(Function):
-    __slots__ = ()
-    _function = 'UPPER'
-
-
-class ToChar(Function):
-    __slots__ = ()
-    _function = 'TO_CHAR'
-
-
-class ToDate(Function):
-    __slots__ = ()
-    _function = 'TO_DATE'
-
-
-class ToNumber(Function):
-    __slots__ = ()
-    _function = 'TO_NUMBER'
-
-
-class ToTimestamp(Function):
-    __slots__ = ()
-    _function = 'TO_TIMESTAMP'
-
-
-class Age(Function):
-    __slots__ = ()
-    _function = 'AGE'
-
-
-class ClockTimestamp(Function):
-    __slots__ = ()
-    _function = 'CLOCK_TIMESTAMP'
-
-
-class CurrentDate(FunctionNotCallable):
-    __slots__ = ()
-    _function = 'CURRENT_DATE'
-
-
-class CurrentTime(FunctionNotCallable):
-    __slots__ = ()
-    _function = 'CURRENT_TIME'
-
-
-class CurrentTimestamp(FunctionNotCallable):
-    __slots__ = ()
-    _function = 'CURRENT_TIMESTAMP'
-
-
-class DatePart(Function):
-    __slots__ = ()
-    _function = 'DATE_PART'
-
-
-class DateTrunc(Function):
-    __slots__ = ()
-    _function = 'DATE_TRUNC'
-
+_define_functions(Function, (
+    ('Upper', 'UPPER'),
+    ('ToChar', 'TO_CHAR'), ('ToDate', 'TO_DATE'),
+    ('ToNumber', 'TO_NUMBER'), ('ToTimestamp', 'TO_TIMESTAMP'),
+    ('Age', 'AGE'), ('ClockTimestamp', 'CLOCK_TIMESTAMP'),
+    ('DatePart', 'DATE_PART'), ('DateTrunc', 'DATE_TRUNC'),
+))
+_define_functions(FunctionNotCallable, (
+    ('CurrentDate', 'CURRENT_DATE'), ('CurrentTime', 'CURRENT_TIME'),
+    ('CurrentTimestamp', 'CURRENT_TIMESTAMP'),
+))
 
 class Extract(FunctionKeyword):
     __slots__ = ('_field',)
@@ -449,54 +269,18 @@ class Extract(FunctionKeyword):
             OP_EXTRACT, _nodes(self.args) or (_NONE,), 0, 0, self.field)
 
 
-class Isfinite(Function):
-    __slots__ = ()
-    _function = 'ISFINITE'
-
-
-class JustifyDays(Function):
-    __slots__ = ()
-    _function = 'JUSTIFY_DAYS'
-
-
-class JustifyHours(Function):
-    __slots__ = ()
-    _function = 'JUSTIFY_HOURS'
-
-
-class JustifyInterval(Function):
-    __slots__ = ()
-    _function = 'JUSTIFY_INTERVAL'
-
-
-class Localtime(FunctionNotCallable):
-    __slots__ = ()
-    _function = 'LOCALTIME'
-
-
-class Localtimestamp(FunctionNotCallable):
-    __slots__ = ()
-    _function = 'LOCALTIMESTAMP'
-
-
-class Now(Function):
-    __slots__ = ()
-    _function = 'NOW'
-
-
-class StatementTimestamp(Function):
-    __slots__ = ()
-    _function = 'STATEMENT_TIMESTAMP'
-
-
-class Timeofday(Function):
-    __slots__ = ()
-    _function = 'TIMEOFDAY'
-
-
-class TransactionTimestamp(Function):
-    __slots__ = ()
-    _function = 'TRANSACTION_TIMESTAMP'
+_define_functions(Function, (
+    ('Isfinite', 'ISFINITE'),
+    ('JustifyDays', 'JUSTIFY_DAYS'),
+    ('JustifyHours', 'JUSTIFY_HOURS'),
+    ('JustifyInterval', 'JUSTIFY_INTERVAL'),
+    ('Now', 'NOW'), ('StatementTimestamp', 'STATEMENT_TIMESTAMP'),
+    ('Timeofday', 'TIMEOFDAY'),
+    ('TransactionTimestamp', 'TRANSACTION_TIMESTAMP'),
+))
+_define_functions(FunctionNotCallable, (
+    ('Localtime', 'LOCALTIME'), ('Localtimestamp', 'LOCALTIMESTAMP'),
+))
 
 
 class AtTimeZone(Function):
@@ -571,56 +355,10 @@ class WindowFunction(Function):
             self._sql_name(self if mapped is None else mapped))
 
 
-class RowNumber(WindowFunction):
-    __slots__ = ()
-    _function = 'ROW_NUMBER'
-
-
-class Rank(WindowFunction):
-    __slots__ = ()
-    _function = 'RANK'
-
-
-class DenseRank(WindowFunction):
-    __slots__ = ()
-    _function = 'DENSE_RANK'
-
-
-class PercentRank(WindowFunction):
-    __slots__ = ()
-    _function = 'PERCENT_RANK'
-
-
-class CumeDist(WindowFunction):
-    __slots__ = ()
-    _function = 'CUME_DIST'
-
-
-class Ntile(WindowFunction):
-    __slots__ = ()
-    _function = 'NTILE'
-
-
-class Lag(WindowFunction):
-    __slots__ = ()
-    _function = 'LAG'
-
-
-class Lead(WindowFunction):
-    __slots__ = ()
-    _function = 'LEAD'
-
-
-class FirstValue(WindowFunction):
-    __slots__ = ()
-    _function = 'FIRST_VALUE'
-
-
-class LastValue(WindowFunction):
-    __slots__ = ()
-    _function = 'LAST_VALUE'
-
-
-class NthValue(WindowFunction):
-    __slots__ = ()
-    _function = 'NTH_VALUE'
+_define_functions(WindowFunction, (
+    ('RowNumber', 'ROW_NUMBER'), ('Rank', 'RANK'),
+    ('DenseRank', 'DENSE_RANK'), ('PercentRank', 'PERCENT_RANK'),
+    ('CumeDist', 'CUME_DIST'), ('Ntile', 'NTILE'), ('Lag', 'LAG'),
+    ('Lead', 'LEAD'), ('FirstValue', 'FIRST_VALUE'),
+    ('LastValue', 'LAST_VALUE'), ('NthValue', 'NTH_VALUE'),
+))

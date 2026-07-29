@@ -120,30 +120,20 @@ class Aggregate(Expression):
         flags = _C['AGGREGATE_FLAG_DISTINCT'] if self._distinct else 0
         return _make(OP_AGGREGATE, tuple(slots), flags, 0, self._sql)
 
-
-class Avg(Aggregate):
-    __slots__ = ()
-    _sql = 'AVG'
-
-
-class BitAnd(Aggregate):
-    __slots__ = ()
-    _sql = 'BIT_AND'
-
-
-class BitOr(Aggregate):
-    __slots__ = ()
-    _sql = 'BIT_OR'
+def _define_aggregates(definitions):
+    for name, sql_name in definitions:
+        aggregate_type = type(name, (Aggregate,), {
+            '__module__': __name__,
+            '__slots__': (),
+            '_sql': sql_name,
+        })
+        globals()[name] = aggregate_type
 
 
-class BoolAnd(Aggregate):
-    __slots__ = ()
-    _sql = 'BOOL_AND'
-
-
-class BoolOr(Aggregate):
-    __slots__ = ()
-    _sql = 'BOOL_OR'
+_define_aggregates((
+    ('Avg', 'AVG'), ('BitAnd', 'BIT_AND'), ('BitOr', 'BIT_OR'),
+    ('BoolAnd', 'BOOL_AND'), ('BoolOr', 'BOOL_OR'),
+))
 
 
 class _Star(Expression):
@@ -171,31 +161,7 @@ class Count(Aggregate):
         return super()._expression_handle()
 
 
-class Every(Aggregate):
-    __slots__ = ()
-    _sql = 'EVERY'
-
-
-class Max(Aggregate):
-    __slots__ = ()
-    _sql = 'MAX'
-
-
-class Min(Aggregate):
-    __slots__ = ()
-    _sql = 'MIN'
-
-
-class Stddev(Aggregate):
-    __slots__ = ()
-    _sql = 'Stddev'
-
-
-class Sum(Aggregate):
-    __slots__ = ()
-    _sql = 'SUM'
-
-
-class Variance(Aggregate):
-    __slots__ = ()
-    _sql = 'VARIANCE'
+_define_aggregates((
+    ('Every', 'EVERY'), ('Max', 'MAX'), ('Min', 'MIN'),
+    ('Stddev', 'Stddev'), ('Sum', 'SUM'), ('Variance', 'VARIANCE'),
+))
