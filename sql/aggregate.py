@@ -5,7 +5,8 @@ handle; the quantifier, the ``ORDER BY`` tail, ``WITHIN GROUP``, ``FILTER`` and
 the ``OVER`` clause are rendered by the Mojo core.
 """
 from sql import (
-    Expression, Flavor, Literal, Window, _C, _NONE, _list, _make, _node)
+    Expression, Flavor, Literal, Window, _C, _NONE, _list, _make, _node,
+    _normalize_expressions)
 
 __all__ = ['Avg', 'BitAnd', 'BitOr', 'BoolAnd', 'BoolOr', 'Count', 'Every',
     'Max', 'Min', 'Stddev', 'Sum', 'Variance']
@@ -55,12 +56,7 @@ class Aggregate(Expression):
 
     @order_by.setter
     def order_by(self, value):
-        if value is not None:
-            if isinstance(value, Expression):
-                value = [value]
-            if any(not isinstance(col, Expression) for col in value):
-                raise ValueError("invalid order by: %r" % value)
-        self._order_by = value
+        self._order_by = _normalize_expressions(value, 'order by')
 
     @property
     def within(self):
@@ -68,12 +64,7 @@ class Aggregate(Expression):
 
     @within.setter
     def within(self, value):
-        if value is not None:
-            if isinstance(value, Expression):
-                value = [value]
-            if any(not isinstance(col, Expression) for col in value):
-                raise ValueError("invalid within: %r" % value)
-        self._within = value
+        self._within = _normalize_expressions(value, 'within')
 
     @property
     def filter_(self):

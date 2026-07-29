@@ -95,6 +95,15 @@ def _nodes(values):
     return tuple(_value_node(value) for value in values)
 
 
+def _normalize_expressions(value, name):
+    if value is not None:
+        if isinstance(value, Expression):
+            value = [value]
+        if any(not isinstance(expression, Expression) for expression in value):
+            raise ValueError("invalid %s: %r" % (name, value))
+    return value
+
+
 def _list(values):
     if not values:
         return _EMPTY
@@ -925,12 +934,7 @@ class SelectQuery(Query, FromItem):
 
     @order_by.setter
     def order_by(self, value):
-        if value is not None:
-            if isinstance(value, Expression):
-                value = [value]
-            if any(not isinstance(col, Expression) for col in value):
-                raise ValueError("invalid order by: %r" % (value,))
-        self._order_by = value
+        self._order_by = _normalize_expressions(value, 'order by')
 
     @property
     def limit(self):
