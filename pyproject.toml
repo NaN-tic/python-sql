@@ -3,11 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "python-sql"
+name = "python-sql-mojo"
 version = "1.8.1.1"
 description = "Mojo-backed replacement for python-sql"
-requires-python = ">=3.12"
-dependencies = ["mojo>=0.26.2"]
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: POSIX :: Linux",
+]
 
 [project.optional-dependencies]
 benchmark = [
@@ -17,4 +22,7 @@ benchmark = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["sql"]
-artifacts = ["sql/_core.so"]
+artifacts = [
+  "sql/_core.so",
+  "sql/_runtime/*.so",
+]

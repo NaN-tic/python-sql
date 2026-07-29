@@ -1,82 +1,54 @@
 #!/usr/bin/env python3
-"""Compile the native core into `sql/_core.so`.
-
-The bundled `mojo.importer` compiles a single file without an include path and
-is pinned to whatever compiler sits in the active virtualenv.  This project
-needs the multi-file `sql/sqlcore` package, so the extension is built ahead of
-time and imported like any other C extension.
-"""
+"""Build sql._core and bundle its Mojo runtime libraries."""
 from __future__ import annotations
 
-import argparse
 import os
+import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "sql" / "_core.mojo"
-TARGET = ROOT / "sql" / "_core.so"
-DEFAULT_TOOLCHAIN = Path.home() / "Documents" / "repos" / "mojo" / ".mojo"
+PACKAGE = ROOT / "sql"
+SOURCE = PACKAGE / "_core.mojo"
+EXTENSION = PACKAGE / "_core.so"
+RUNTIME = PACKAGE / "_runtime"
+RUNTIME_LIBRARIES = (
+    "libKGENCompilerRTShared.so",
+    "libMSupportGlobals.so",
+    "libAsyncRTRuntimeGlobals.so",
+    "libNVPTX.so",
+    "libAsyncRTMojoBindings.so",
+)
 
 
-def toolchain_root(prefix: Path) -> Path:
-    matches = sorted(prefix.glob("lib/python*/site-packages/modular"))
-    if not matches:
-        raise SystemExit(f"no Mojo toolchain under {prefix}")
-    return matches[0]
+def run(*args: str) -> None:
+    subprocess.run(args, check=True)
 
 
-def build(prefix: Path, source: Path, target: Path) -> int:
-    root = toolchain_root(prefix)
-    mojo = root / "bin" / "mojo"
-    if not mojo.exists():
-        raise SystemExit(f"missing mojo compiler at {mojo}")
-    environment = dict(os.environ)
-    environment.update(
-        MODULAR_MAX_PACKAGE_ROOT=str(root),
-        MODULAR_MOJO_MAX_PACKAGE_ROOT=str(root),
-        MODULAR_MOJO_MAX_DRIVER_PATH=str(mojo),
-        MODULAR_MOJO_MAX_IMPORT_PATH=str(root / "lib" / "mojo"),
-    )
-    completed = subprocess.run(
-        [
-            str(mojo),
-            "build",
-            str(source),
-            "--emit",
-            "shared-lib",
-            "-o",
-            str(target),
-        ],
-        env=environment,
-        capture_output=True,
-        text=True,
-    )
-    output = completed.stdout + completed.stderr
-    interesting = [
-        line
-        for line in output.splitlines()
-        if ": error:" in line or ": warning:" in line
-    ]
-    if interesting:
-        print("\n".join(interesting), file=sys.stderr)
-    if completed.returncode != 0:
-        print(output, file=sys.stderr)
-    return completed.returncode
+def main() -> None:
+    mojo = shutil.which("mojo")
+    patchelf = shutil.which("patchelf")
+    if not mojo or not patchelf:
+        raise SystemExit("run this script through `pixi run build`")
 
+    prefix = Path(os.environ.get("CONDA_PREFIX", Path(mojo).resolve().parents[1]))
+    runtime_source = prefix / "lib"
+    if not runtime_source.is_dir():
+        raise SystemExit(f"Mojo runtime directory not found: {runtime_source}")
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--toolchain",
-        type=Path,
-        default=Path(os.environ.get("PYTHON_SQL_MOJO_TOOLCHAIN", DEFAULT_TOOLCHAIN)),
-        help="virtualenv holding the Mojo compiler",
-    )
-    arguments = parser.parse_args()
-    return build(arguments.toolchain, SOURCE, TARGET)
+    RUNTIME.mkdir(exist_ok=True)
+    EXTENSION.unlink(missing_ok=True)
+    run(mojo, "build", str(SOURCE), "--emit", "shared-lib", "-o", str(EXTENSION))
+    run(patchelf, "--set-rpath", "$ORIGIN/_runtime", str(EXTENSION))
+
+    for library in RUNTIME_LIBRARIES:
+        source = runtime_source / library
+        destination = RUNTIME / library
+        if not source.is_file():
+            raise SystemExit(f"required Mojo runtime library not found: {source}")
+        shutil.copy2(source, destination)
+        run(patchelf, "--set-rpath", "$ORIGIN", str(destination))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

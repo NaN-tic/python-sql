@@ -1,0 +1,9 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+__pycache__/
+*.py[cod]
+sql/_core.so
+sql/_runtime/
+dist/
+*.egg-info/
