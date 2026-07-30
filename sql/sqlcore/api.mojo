@@ -133,6 +133,14 @@ def render(
     else:
         sql = render_expr(tree[], ctx)
 
+    var param_count = len(ctx.params)
+    if param_count == 0:
+        return Python.tuple(sql, Python.tuple(), ctx.aliases.high_water)
+    if param_count == 1:
+        return Python.tuple(
+            sql, Python.tuple(ctx.params[0]), ctx.aliases.high_water
+        )
+
     var params = Python.list()
     for item in ctx.params:
         params.append(item)
