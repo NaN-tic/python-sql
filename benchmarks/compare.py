@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
-import importlib.util
 import json
 import os
 import resource
@@ -14,7 +13,13 @@ import time
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PYTHON_SQL_ROOT = Path(
+    os.environ.get(
+        "PYTHON_SQL_UPSTREAM",
+        PROJECT_ROOT.parent / "python-sql-upstream",
+    )
+)
 _IMPLEMENTATION = os.environ.get("PYTHON_SQL_BENCHMARK_IMPLEMENTATION")
 
 if _IMPLEMENTATION == "python_sql":
@@ -22,35 +27,15 @@ if _IMPLEMENTATION == "python_sql":
     from sql.aggregate import Count
 
     MojoTable = None
-elif _IMPLEMENTATION:
+elif _IMPLEMENTATION == "mojo_sql":
     from sql.aggregate import Count
     from sql import Table as MojoTable
 
     PythonTable = None
 else:
-    sys.path.insert(0, str(ROOT / "python-sql-mojo"))
-
-    from sql import Table as MojoTable
-
+    PythonTable = None
+    MojoTable = None
     Count = None
-    _PYTHON_PACKAGE = ROOT / "python-sql" / "sql"
-    _PYTHON_SPEC = importlib.util.spec_from_file_location(
-        "sql_python_benchmark",
-        _PYTHON_PACKAGE / "__init__.py",
-        submodule_search_locations=[str(_PYTHON_PACKAGE)],
-    )
-    assert _PYTHON_SPEC and _PYTHON_SPEC.loader
-    _PYTHON_MODULE = importlib.util.module_from_spec(_PYTHON_SPEC)
-    sys.modules[_PYTHON_SPEC.name] = _PYTHON_MODULE
-    _PYTHON_SPEC.loader.exec_module(_PYTHON_MODULE)
-    PythonTable = _PYTHON_MODULE.Table
-
-
-EXPECTED = (
-    'SELECT "a"."id", "a"."label" FROM "user" AS "a" '
-    'WHERE "a"."active" = %s',
-    (True,),
-)
 
 
 def _current_rss_bytes():
@@ -59,6 +44,8 @@ def _current_rss_bytes():
     except (FileNotFoundError, IndexError, ValueError):
         return 0
     return pages * resource.getpagesize()
+
+
 def _process_snapshot():
     usage = resource.getrusage(resource.RUSAGE_SELF)
     rss_bytes = _current_rss_bytes()
@@ -71,6 +58,7 @@ def _process_snapshot():
         "peak_rss_bytes": max(usage.ru_maxrss * 1024, rss_bytes),
         "allocated_blocks": allocated_blocks,
     }
+
 
 def _with_process_stats(report, before, after, wall_seconds):
     user_cpu_seconds = after["user_cpu_seconds"] - before["user_cpu_seconds"]
@@ -95,26 +83,6 @@ def _with_process_stats(report, before, after, wall_seconds):
         after["allocated_blocks"] - before["allocated_blocks"]
     )
     return report
-
-
-def python_query(table: PythonTable):
-    return tuple(
-        table.select(
-            table.id,
-            table.label,
-            where=table.active == True,
-        )
-    )
-
-
-def mojo_query(table: MojoTable):
-    return tuple(
-        table.select(
-            table.id,
-            table.label,
-            where=table.active == True,
-        )
-    )
 
 
 def _build_python_query(index: int):
@@ -420,7 +388,7 @@ def _build_query_workload(implementation, workload, argument_count):
                 return tuple(_build_mojo_query(index))
         else:
             raise ValueError(f"unknown implementation: {implementation}")
-    elif workload == "fallback_queries":
+    elif workload == "aggregate_queries":
         if implementation == "python_sql":
             table = PythonTable("user")
         elif implementation == "mojo_sql":
@@ -470,211 +438,6 @@ def _build_query_workload(implementation, workload, argument_count):
     )
     expected = call(0)
     return call, expected, setup_report
-
-def measure(function, iterations: int, repeats: int, warmups: int):
-    process_before = _process_snapshot()
-    phase_started = time.perf_counter()
-    for _ in range(warmups):
-        for _ in range(iterations):
-            function()
-
-    samples = []
-    last = None
-    for _ in range(repeats):
-        start = time.perf_counter()
-        for _ in range(iterations):
-            last = function()
-        samples.append(time.perf_counter() - start)
-    elapsed = statistics.median(samples)
-    report = {
-        "median_seconds": elapsed,
-        "nanoseconds_per_call": elapsed * 1e9 / iterations,
-        "last_result": last,
-        "samples_seconds": samples,
-    }
-    return _with_process_stats(
-        report,
-        process_before,
-        _process_snapshot(),
-        time.perf_counter() - phase_started,
-    )
-
-
-
-def _container_snapshot(postgres):
-    client = postgres.get_docker_client()
-    container_id = postgres.get_wrapped_container().id
-    stats = client.client.api.stats(container_id, stream=False)
-    cpu_stats = stats["cpu_stats"]
-    memory_stats = stats["memory_stats"]
-    return {
-        "cpu_total": cpu_stats["cpu_usage"]["total_usage"],
-        "system_total": cpu_stats.get("system_cpu_usage", 0),
-        "online_cpus": cpu_stats.get("online_cpus") or 1,
-        "memory_usage": memory_stats.get("usage", 0),
-        "memory_max_usage": memory_stats.get(
-            "max_usage", memory_stats.get("usage", 0)
-        ),
-    }
-
-
-def _with_container_stats(report, before, after):
-    cpu_delta = after["cpu_total"] - before["cpu_total"]
-    system_delta = after["system_total"] - before["system_total"]
-    report["postgres_container_cpu_percent"] = (
-        cpu_delta / system_delta * after["online_cpus"] * 100
-        if system_delta
-        else 0.0
-    )
-    report["postgres_container_memory_current_mib"] = (
-        after["memory_usage"] / (1024 * 1024)
-    )
-    report["postgres_container_memory_peak_mib"] = (
-        max(before["memory_max_usage"], after["memory_max_usage"])
-        / (1024 * 1024)
-    )
-    return report
-
-
-def measure_postgres(
-    function, iterations: int, repeats: int, warmups: int, postgres
-):
-    container_before = _container_snapshot(postgres)
-    report = measure(function, iterations, repeats, warmups)
-    container_after = _container_snapshot(postgres)
-    return _with_container_stats(report, container_before, container_after)
-
-
-def _postgres_call(cursor, builder):
-    sql, params = builder()
-    cursor.execute(sql, params)
-    row = cursor.fetchone()
-    if row is None:
-        raise AssertionError("PostgreSQL query returned no rows")
-    return row
-
-
-def run_postgres(args) -> int:
-    try:
-        import psycopg
-        from testcontainers.postgres import PostgresContainer
-    except ModuleNotFoundError as error:
-        raise SystemExit(
-            "PostgreSQL mode needs 'testcontainers[postgres]' and "
-            "'psycopg[binary]'; install the benchmark extra"
-        ) from error
-
-    container_started = time.perf_counter()
-    with PostgresContainer(args.postgres_image) as postgres:
-        container_ready = time.perf_counter() - container_started
-        connection_url = postgres.get_connection_url(driver=None)
-        with psycopg.connect(connection_url, autocommit=True) as connection:
-            with connection.cursor() as setup:
-                setup.execute(
-                    'CREATE TABLE "user" ('
-                    '"id" integer NOT NULL, '
-                    '"label" text NOT NULL, '
-                    '"active" boolean NOT NULL)'
-                )
-                setup.execute(
-                    'INSERT INTO "user" ("id", "label", "active") '
-                    "VALUES (1, 'Foo', TRUE), (2, 'Bar', FALSE)"
-                )
-
-            python_table = PythonTable("user")
-            mojo_table = MojoTable("user")
-            if python_query(python_table) != EXPECTED:
-                raise AssertionError("python-sql parity check failed")
-            if mojo_query(mojo_table) != EXPECTED:
-                raise AssertionError("Mojo parity check failed")
-
-            with connection.cursor() as python_cursor:
-                python_stats = measure_postgres(
-                    lambda: _postgres_call(
-                        python_cursor, lambda: python_query(python_table)
-                    ),
-                    args.iterations,
-                    args.repeats,
-                    args.warmups,
-                    postgres,
-                )
-            with connection.cursor() as mojo_cursor:
-                mojo_stats = measure_postgres(
-                    lambda: _postgres_call(
-                        mojo_cursor, lambda: mojo_query(mojo_table)
-                    ),
-                    args.iterations,
-                    args.repeats,
-                    args.warmups,
-                    postgres,
-                )
-
-    expected_row = (1, "Foo")
-    if python_stats["last_result"] != expected_row:
-        raise AssertionError("Python PostgreSQL result mismatch")
-    if mojo_stats["last_result"] != expected_row:
-        raise AssertionError("Mojo PostgreSQL result mismatch")
-
-    report = {
-        "mode": "postgres",
-        "postgres_image": args.postgres_image,
-        "container_ready_seconds": container_ready,
-        "iterations": args.iterations,
-        "repeats": args.repeats,
-        "warmups": args.warmups,
-        "query": {
-            "sql": EXPECTED[0],
-            "params": list(EXPECTED[1]),
-        },
-        "per_call": {
-            "python_sql": python_stats,
-            "mojo": mojo_stats,
-            "speedup_python_over_mojo": (
-                python_stats["median_seconds"]
-                / mojo_stats["median_seconds"]
-            ),
-        },
-    }
-    if args.as_json:
-        print(json.dumps(report, indent=2))
-    else:
-        print("python-sql vs python-sql-mojo against PostgreSQL")
-        print(
-            f"image={args.postgres_image} "
-            f"container_ready={container_ready:.2f}s"
-        )
-        print(
-            f"iterations={args.iterations} "
-            f"repeats={args.repeats} warmups={args.warmups}"
-        )
-        print(f"parity: {EXPECTED!r}")
-        print(
-            f"  python-sql:      "
-            f"{python_stats['nanoseconds_per_call']:,.1f} ns/query"
-        )
-        print(
-            f"  python-sql-mojo: "
-            f"{mojo_stats['nanoseconds_per_call']:,.1f} ns/query"
-        )
-        print(
-            f"  speedup:         "
-            f"{report['per_call']['speedup_python_over_mojo']:.2f}x"
-        )
-        for label, stats in (
-            ("python-sql", python_stats),
-            ("python-sql-mojo", mojo_stats),
-        ):
-            print(
-                f"  {label} host CPU: {stats['process_cpu_percent']:.1f}% "
-                f"peak RSS: {stats['process_peak_rss_mib']:.1f} MiB"
-            )
-            print(
-                f"    PostgreSQL CPU: "
-                f"{stats['postgres_container_cpu_percent']:.1f}% "
-                f"RAM: {stats['postgres_container_memory_current_mib']:.1f} MiB "
-                f"peak: {stats['postgres_container_memory_peak_mib']:.1f} MiB"
-            )
-    return 0
 
 
 _IMPLEMENTATION_BUILDERS = {
@@ -750,9 +513,9 @@ def _run_isolated_implementation(args, implementation: str, workload: str):
     child_environment.pop("PYTHONHOME", None)
     child_environment["PYTHON_SQL_BENCHMARK_IMPLEMENTATION"] = implementation
     package_root = (
-        ROOT / "python-sql"
+        args.python_sql_root
         if implementation == "python_sql"
-        else ROOT / "python-sql-mojo"
+        else PROJECT_ROOT
     )
     child_environment["PYTHONPATH"] = str(package_root)
     try:
@@ -808,7 +571,6 @@ def run_object_benchmark(args):
         "contract": {
             "conversion_only": True,
             "object_construction_timed_separately": True,
-            "database_execution": False,
             "string_method": "query.__str__()",
         },
         "objects": args.objects,
@@ -869,13 +631,12 @@ def run_query_benchmark(args, workload: str):
     return {
         "mode": workload,
         "contract": {
-            "database_execution": False,
             "operation": (
                 "create query and tuple(query)"
                 if workload == "cold_queries"
                 else (
-                    "tuple(aggregate select) through legacy fallback"
-                    if workload == "fallback_queries"
+                    "tuple(prebuilt aggregate select)"
+                    if workload == "aggregate_queries"
                     else (
                         "tuple(select) on a prebuilt simple query"
                         if workload == "simple_queries"
@@ -999,11 +760,13 @@ def _print_object_benchmark(report):
         )
         if name != "python_sql":
             print(f"  speedup vs python-sql: {speedup:.2f}x")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Hard benchmarks for cold query construction, warm rendering, "
-            "and repeated parameterized queries; --postgres is separate"
+            "and repeated parameterized queries"
         )
     )
     parser.add_argument(
@@ -1014,7 +777,7 @@ def main() -> int:
             "cold_queries",
             "simple_queries",
             "many_arguments",
-            "fallback_queries",
+            "aggregate_queries",
         ),
         default="all",
         help="workload to run (default: all)",
@@ -1041,11 +804,14 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, default=2)
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument(
-        "--postgres",
-        action="store_true",
-        help="run the separate query-execution benchmark against PostgreSQL",
+        "--python-sql-root",
+        type=Path,
+        default=DEFAULT_PYTHON_SQL_ROOT,
+        help=(
+            "root containing the upstream python-sql package "
+            f"(default: {DEFAULT_PYTHON_SQL_ROOT})"
+        ),
     )
-    parser.add_argument("--postgres-image", default="postgres:16")
     parser.add_argument(
         "--implementation",
         choices=tuple(_IMPLEMENTATION_BUILDERS),
@@ -1064,21 +830,24 @@ def main() -> int:
             "warmups cannot be negative"
         )
 
+    args.python_sql_root = args.python_sql_root.resolve()
     if args.implementation:
         if args.workload == "all":
             parser.error("isolated implementation requires one workload")
         print(json.dumps(_run_implementation(args), indent=2))
         return 0
-    if args.postgres:
-        return run_postgres(args)
-
+    if not (args.python_sql_root / "sql" / "__init__.py").is_file():
+        parser.error(
+            "upstream python-sql not found under "
+            f"{args.python_sql_root}; use --python-sql-root"
+        )
     if args.workload == "all":
         reports = {
             "object_to_string": run_object_benchmark(args),
             "cold_queries": run_query_benchmark(args, "cold_queries"),
             "simple_queries": run_query_benchmark(args, "simple_queries"),
-            "fallback_queries": run_query_benchmark(
-                args, "fallback_queries"),
+            "aggregate_queries": run_query_benchmark(
+                args, "aggregate_queries"),
             "many_arguments": run_query_benchmark(args, "many_arguments"),
         }
         if args.as_json:
@@ -1087,7 +856,7 @@ def main() -> int:
             _print_object_benchmark(reports["object_to_string"])
             _print_query_benchmark(reports["cold_queries"])
             _print_query_benchmark(reports["simple_queries"])
-            _print_query_benchmark(reports["fallback_queries"])
+            _print_query_benchmark(reports["aggregate_queries"])
             _print_query_benchmark(reports["many_arguments"])
         return 0
 

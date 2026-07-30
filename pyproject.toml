@@ -14,12 +14,6 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
 ]
 
-[project.optional-dependencies]
-benchmark = [
-    "testcontainers[postgres]>=4.0",
-    "psycopg[binary]>=3.2",
-]
-
 [tool.hatch.build.targets.wheel]
 packages = ["sql"]
 artifacts = [
