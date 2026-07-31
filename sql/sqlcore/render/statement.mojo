@@ -611,7 +611,7 @@ def render_matched(node: Tree, mut ctx: Context) raises -> String:
         if condition[].op == OP_NARY:
             result += " AND " + _render_merge_condition(condition[], ctx)
         else:
-            result += " AND " + render_operand(condition[], ctx)
+            result += " AND " + render_arg(condition[], ctx)
     result += " THEN "
     if node.i0 == MATCHED_ACTION_NOTHING:
         return result + "DO NOTHING"

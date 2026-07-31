@@ -16,7 +16,6 @@ import time
 import warnings
 from array import array
 from collections import defaultdict
-from itertools import count
 from sys import getrefcount
 from threading import current_thread, local
 from weakref import ref
@@ -30,13 +29,12 @@ __all__ = [
     'Rollup', 'Cube', 'Excluded', 'Join', 'Asc', 'Desc', 'NullsFirst',
     'NullsLast', 'format2numeric']
 
-__version__ = '1.8.2'
+__version__ = '1.8.1'
 
 logger = logging.getLogger(__name__)
 _PROFILE_MINIMUM_MS = float(os.environ.get('PYTHON_SQL_PROFILE_MIN_MS', '5'))
 
 _C = _core.constants()
-_next_identity = count(1).__next__
 _handle_generation = 0
 _tracking_mutations = False
 _tracked_nodes = {}
@@ -306,7 +304,7 @@ def _literal(value):
 
 def _node(value):
     """Handle for any Python value used where an expression is expected."""
-    if isinstance(value, _Node):
+    if isinstance(value, (_Node, Query, FromItem)):
         return value._handle()
     if value is None:
         return _NONE
@@ -692,6 +690,9 @@ class _MappedNode(_Node):
 class Query(_Node):
     __slots__ = ()
 
+    def __init__(self):
+        super().__init__()
+
     def __or__(self, other):
         return Union(self, other)
 
@@ -710,6 +711,9 @@ class Query(_Node):
 
 class Expression(_Node):
     __slots__ = ()
+
+    def __init__(self):
+        super().__init__()
 
     def _binary(self, operator, other):
         return BinaryExpression(
@@ -844,17 +848,26 @@ class Expression(_Node):
 class BinaryExpression(Expression):
     __slots__ = ('_node_handle')
 
+    def __init__(self, handle):
+        _Node.__init__(self, handle)
+
 
 class UnaryExpression(Expression):
     __slots__ = ()
 
+    def __init__(self, handle):
+        _Node.__init__(self, handle)
+
 
 class FromItem(_Node):
-    __slots__ = ('_identity',)
+    __slots__ = ()
 
-    def __init__(self, handle=None):
-        super().__init__(handle)
-        self._identity = _next_identity()
+    def __init__(self):
+        super().__init__()
+
+    @property
+    def _identity(self):
+        return id(self)
 
     @property
     def alias(self):
@@ -967,11 +980,15 @@ class Column(Expression):
 
 
 class Literal(Expression):
-    __slots__ = ('_node_handle', 'value',)
+    __slots__ = ('_node_handle', '_value',)
 
     def __init__(self, value):
-        super().__init__(_literal(value))
-        self.value = value
+        _Node.__init__(self, _literal(value))
+        self._value = value
+
+    @property
+    def value(self):
+        return self._value
 
 
 Null = None
@@ -1002,7 +1019,8 @@ class _ExcludedColumn(Expression):
     __slots__ = ('_node_handle', '_name',)
 
     def __init__(self, name):
-        super().__init__(_make(OP_EXCLUDED_COLUMN, (), 0, 0, name))
+        _Node.__init__(
+            self, _make(OP_EXCLUDED_COLUMN, (), 0, 0, name))
         self._name = name
 
     @property
@@ -1187,20 +1205,54 @@ def _with_definition_handles(value):
         tuple(item._definition() for item in (value or ())))
 
 
-class SelectQuery(Query, FromItem):
-    """Common ORDER BY / LIMIT / OFFSET tail of the query statements."""
-    __slots__ = ('_node_handle', '_order_by', '_limit', '_offset', '_with')
+class WithQuery(Query):
+    __slots__ = ('_with',)
 
-    def __init__(self, order_by=None, limit=None, offset=None, with_=None):
-        FromItem.__init__(self)
+    def __init__(self, **kwargs):
+        with_ = kwargs.pop('with_', None)
+        super().__init__(**kwargs)
+        self._with = None
+        self.with_ = with_
+
+    @property
+    def with_(self):
+        return self._with
+
+    @with_.setter
+    def with_(self, value):
+        self._with = _normalize_with(value)
+
+    def _with_handles(self):
+        return _with_definition_handles(self._with)
+
+    def _with_str(self):
+        if not self.with_:
+            return ''
+        recursive = (' RECURSIVE'
+            if any(w.recursive for w in self.with_) else '')
+        return 'WITH%s %s ' % (
+            recursive, ', '.join(w.statement() for w in self.with_))
+
+    def _with_params(self):
+        return tuple(
+            param for w in (self.with_ or ()) for param in w.statement_params())
+
+
+class SelectQuery(WithQuery):
+    """Common ORDER BY / LIMIT / OFFSET tail of the query statements."""
+    __slots__ = ('_node_handle', '_order_by', '_limit', '_offset')
+
+    def __init__(self, *args, **kwargs):
+        order_by = kwargs.pop('order_by', None)
+        limit = kwargs.pop('limit', None)
+        offset = kwargs.pop('offset', None)
+        super().__init__(*args, **kwargs)
         self._order_by = None
         self._limit = None
         self._offset = None
-        self._with = None
         self.order_by = order_by
         self.limit = limit
         self.offset = offset
-        self.with_ = with_
 
     @property
     def order_by(self):
@@ -1231,17 +1283,6 @@ class SelectQuery(Query, FromItem):
             if not isinstance(value, numbers.Integral):
                 raise ValueError("invalid offset: %r" % (value,))
         self._offset = value
-
-    @property
-    def with_(self):
-        return self._with
-
-    @with_.setter
-    def with_(self, value):
-        self._with = _normalize_with(value)
-
-    def _with_handles(self):
-        return _with_definition_handles(self._with)
 
     def _limit_handle(self):
         return _NONE if self._limit is None else _param(self._limit)
@@ -1294,43 +1335,11 @@ class With(FromItem):
         return Select(columns=columns, from_=[self], **kwargs)
 
 
-class WithQuery(Query):
-    __slots__ = ('_with',)
-
-    def __init__(self, with_=None, **kwargs):
-        super().__init__(**kwargs)
-        self._with = None
-        self.with_ = with_
-
-    @property
-    def with_(self):
-        return self._with
-
-    @with_.setter
-    def with_(self, value):
-        self._with = _normalize_with(value)
-
-    def _with_handles(self):
-        return _with_definition_handles(self._with)
-
-    def _with_str(self):
-        if not self.with_:
-            return ''
-        recursive = (' RECURSIVE'
-            if any(w.recursive for w in self.with_) else '')
-        return 'WITH%s %s ' % (
-            recursive, ', '.join(w.statement() for w in self.with_))
-
-    def _with_params(self):
-        return tuple(
-            param for w in (self.with_ or ()) for param in w.statement_params())
-
-
-class Select(SelectQuery):
+class Select(FromItem, SelectQuery):
     __slots__ = ('_columns', '_from', '_from_direct', '_where', '_group_by',
         '_having', '_for', '_distinct', '_distinct_on', '_windows')
 
-    def __init__(self, columns=(), from_=None, where=None, group_by=None,
+    def __init__(self, columns, from_=None, where=None, group_by=None,
             having=None, for_=None, distinct=False, distinct_on=None,
             windows=None, **kwargs):
         self._columns = ()
@@ -1343,7 +1352,7 @@ class Select(SelectQuery):
         self._distinct = False
         self._distinct_on = None
         self._windows = None
-        super().__init__(**kwargs)
+        SelectQuery.__init__(self, **kwargs)
         self.columns = columns
         self.from_ = from_
         self.where = where
@@ -1516,35 +1525,27 @@ class Select(SelectQuery):
         return _make(OP_SELECT, tuple(slots), flags, self._identity)
 
 
-class Values(Query, FromItem):
-    __slots__ = ('_node_handle', '_values',)
-
-    def __init__(self, values, **kwargs):
-        FromItem.__init__(self)
-        self._values = list(values)
-
-    @property
-    def values(self):
-        return self._values
+class Values(list, Query, FromItem):
+    __slots__ = ()
 
     def _handle(self):
         return _make(
             OP_VALUES,
-            tuple(_list(row) for row in self._values),
+            tuple(_list(row) for row in self),
             0, self._identity)
 
     def select(self, *columns, **kwargs):
         return Select(columns=columns, from_=[self], **kwargs)
 
 
-class CombiningQuery(SelectQuery):
+class CombiningQuery(FromItem, SelectQuery):
     __slots__ = ('_queries', 'all_')
     _operator = 'UNION'
     _opcode = None
 
     def __init__(self, *queries, **kwargs):
         self.all_ = kwargs.pop('all_', kwargs.pop('all', False))
-        super().__init__(**kwargs)
+        SelectQuery.__init__(self, **kwargs)
         self.queries = queries
 
     @property
@@ -1686,10 +1687,12 @@ class Update(Insert):
     __slots__ = ('_where', '_from')
 
     def __init__(self, table, columns, values, from_=None, where=None,
-            **kwargs):
+            returning=None, **kwargs):
         self._where = None
         self._from = None
-        super().__init__(table, columns=columns, values=values, **kwargs)
+        super().__init__(
+            table, columns=columns, values=values, returning=returning,
+            **kwargs)
         self.from_ = from_
         self.where = where
 
@@ -1818,26 +1821,62 @@ class Delete(WithQuery):
 
 
 class Merge(WithQuery):
-    __slots__ = ('_node_handle', '_table', '_source', '_condition', '_whens')
+    __slots__ = ('_node_handle', '_target', '_source', '_condition', '_whens')
 
-    def __init__(self, table, source, condition, *whens, **kwargs):
+    def __init__(self, target, source, condition, *whens, **kwargs):
+        self._target = None
+        self._source = None
+        self._condition = None
+        self._whens = None
+        self.target = target
+        self.source = source
+        self.condition = condition
+        self.whens = whens
         super().__init__(**kwargs)
-        if not isinstance(table, Table):
-            raise ValueError("invalid table: %r" % (table,))
-        if not isinstance(source, (Table, SelectQuery, Values)):
-            raise ValueError("invalid source: %r" % (source,))
-        if not isinstance(condition, Expression):
-            raise ValueError("invalid condition: %r" % (condition,))
-        if any(not isinstance(when, Matched) for when in whens):
-            raise ValueError("invalid whens: %r" % (whens,))
-        self._table = table
-        self._source = source
-        self._condition = condition
-        self._whens = whens
+
+    @property
+    def target(self):
+        return self._target
+
+    @target.setter
+    def target(self, value):
+        if not isinstance(value, Table):
+            raise ValueError("invalid target: %r" % (value,))
+        self._target = value
+
+    @property
+    def source(self):
+        return self._source
+
+    @source.setter
+    def source(self, value):
+        if not isinstance(value, (Table, SelectQuery, Values)):
+            raise ValueError("invalid source: %r" % (value,))
+        self._source = value
+
+    @property
+    def condition(self):
+        return self._condition
+
+    @condition.setter
+    def condition(self, value):
+        if not isinstance(value, Expression):
+            raise ValueError("invalid condition: %r" % (value,))
+        self._condition = value
+
+    @property
+    def whens(self):
+        return self._whens
+
+    @whens.setter
+    def whens(self, value):
+        if any(not isinstance(when, Matched) for when in value):
+            raise ValueError("invalid whens: %r" % (value,))
+        self._whens = tuple(value)
 
     def _handle(self):
         slots = [_NONE] * _C['MERGE_SLOTS']
-        slots[_C['MERGE_TABLE']] = self._table._handle()
+        slots[_C['MERGE_TABLE']] = self._target._handle()
         slots[_C['MERGE_SOURCE']] = self._source._handle()
         slots[_C['MERGE_CONDITION']] = self._condition._handle()
         slots[_C['MERGE_WHENS']] = _handles(
@@ -1846,7 +1885,7 @@ class Merge(WithQuery):
         return _make(OP_MERGE, tuple(slots))
 
 
-class Conflict(Expression):
+class Conflict(_Node):
     __slots__ = ('_table', '_indexed_columns', '_index_where', '_columns',
         '_values', '_where')
 
@@ -1946,44 +1985,77 @@ class Conflict(Expression):
 
 
 class Matched(_Node):
-    __slots__ = ('_node_handle', 'condition', 'columns', 'values')
+    __slots__ = ('_node_handle', '_condition')
     _not_matched = False
     _action = _C['MATCHED_ACTION_NOTHING']
 
     def __init__(self, condition=None):
         super().__init__()
-        if condition is not None and not isinstance(condition, Expression):
-            raise ValueError("invalid condition: %r" % (condition,))
+        self._condition = None
         self.condition = condition
-        self.columns = ()
-        self.values = None
+
+    @property
+    def condition(self):
+        return self._condition
+
+    @condition.setter
+    def condition(self, value):
+        if value is not None and not isinstance(value, Expression):
+            raise ValueError("invalid condition: %r" % (value,))
+        self._condition = value
 
     def _values_handle(self):
-        if self.values is None:
+        values = getattr(self, 'values', None)
+        if values is None:
             return _NONE
-        return _make(OP_VALUES, (_list(self.values),))
+        if isinstance(values, Values):
+            return values._handle()
+        return _make(OP_VALUES, (_list(values),))
 
     def _handle(self):
+        columns = getattr(self, 'columns', ())
         slots = [_NONE] * _C['MATCHED_SLOTS']
         slots[_C['MATCHED_CONDITION']] = _node(self.condition)
         slots[_C['MATCHED_COLUMNS']] = _handles(
-            tuple(_name_node(c.name) for c in self.columns))
+            tuple(_name_node(column.name) for column in columns))
         slots[_C['MATCHED_VALUES']] = self._values_handle()
         return _make(
             OP_MATCHED, tuple(slots), self._action,
             1 if self._not_matched else 0)
 
 
-class MatchedUpdate(Matched):
+class _MatchedValues(Matched):
+    __slots__ = ('_columns', '_values')
+
+    def __init__(self, columns, values, **kwargs):
+        self._columns = columns
+        self._values = values
+        self.columns = columns
+        self.values = values
+        super().__init__(**kwargs)
+
+    @property
+    def columns(self):
+        return self._columns
+
+    @columns.setter
+    def columns(self, value):
+        if any(not isinstance(column, Column) for column in value):
+            raise ValueError("invalid columns: %r" % (value,))
+        self._columns = tuple(value)
+
+
+class MatchedUpdate(_MatchedValues, Matched):
     __slots__ = ()
     _action = _C['MATCHED_ACTION_UPDATE']
 
-    def __init__(self, columns, values, condition=None):
-        super().__init__(condition=condition)
-        if any(not isinstance(col, Column) for col in columns):
-            raise ValueError("invalid columns: %r" % (columns,))
-        self.columns = tuple(columns)
-        self.values = list(values)
+    @property
+    def values(self):
+        return self._values
+
+    @values.setter
+    def values(self, value):
+        self._values = value
 
 
 MatchedDelete = _define_leaf_type(
@@ -1991,17 +2063,19 @@ MatchedDelete = _define_leaf_type(
 NotMatched = _define_leaf_type('NotMatched', Matched, _not_matched=True)
 
 
-class NotMatchedInsert(NotMatched):
+class NotMatchedInsert(_MatchedValues, NotMatched):
     __slots__ = ()
     _action = _C['MATCHED_ACTION_INSERT']
 
-    def __init__(self, columns=None, values=None, condition=None):
-        super().__init__(condition=condition)
-        columns = tuple(columns or ())
-        if any(not isinstance(col, Column) for col in columns):
-            raise ValueError("invalid columns: %r" % (columns,))
-        self.columns = columns
-        self.values = list(values) if values is not None else None
+    @property
+    def values(self):
+        return self._values
+
+    @values.setter
+    def values(self, value):
+        if value is not None:
+            value = Values([value])
+        self._values = value
 
 
 class Grouping(Expression):
@@ -2009,19 +2083,28 @@ class Grouping(Expression):
 
     def __init__(self, *sets):
         super().__init__()
-        for set_ in sets:
-            if not isinstance(set_, tuple):
-                raise ValueError("invalid set: %r" % (set_,))
-            if any(not isinstance(e, Expression) for e in set_):
-                raise ValueError("invalid set: %r" % (set_,))
-        self._sets = sets
-        self._node_handle = _make(
-            OP_GROUPING,
-            tuple(_make(OP_GROUPING_SET, _nodes(s)) for s in sets))
+        self._sets = None
+        self.sets = sets
 
     @property
     def sets(self):
         return self._sets
+
+    @sets.setter
+    def sets(self, value):
+        if any(
+                not isinstance(column, Expression)
+                for columns in value
+                for column in columns):
+            raise ValueError("invalid sets: %r" % (value,))
+        self._sets = tuple(tuple(columns) for columns in value)
+
+    def _handle(self):
+        return _make(
+            OP_GROUPING,
+            tuple(
+                _make(OP_GROUPING_SET, _nodes(set_))
+                for set_ in self._sets))
 
 
 class Rollup(Expression):
@@ -2030,36 +2113,42 @@ class Rollup(Expression):
 
     def __init__(self, *expressions):
         super().__init__()
-        for expression in expressions:
-            if not isinstance(expression, (Expression, tuple)):
-                raise ValueError("invalid expression: %r" % (expression,))
-            if isinstance(expression, tuple):
-                if any(not isinstance(e, Expression) for e in expression):
-                    raise ValueError("invalid expression: %r" % (expression,))
-        self._expressions = tuple(expressions)
-        self._node_handle = _make(
-            self._opcode,
-            tuple(
-                _make(OP_ROLLUP_ITEM, _nodes(e))
-                if isinstance(e, tuple) else _node(e)
-                for e in expressions))
+        self._expressions = None
+        self.expressions = expressions
 
     @property
     def expressions(self):
         return self._expressions
 
+    @expressions.setter
+    def expressions(self, value):
+        if not all(
+                isinstance(column, Expression)
+                or all(isinstance(item, Expression) for item in column)
+                for column in value):
+            raise ValueError("invalid expressions: %r" % (value,))
+        self._expressions = tuple(value)
+
+    def _handle(self):
+        return _make(
+            self._opcode,
+            tuple(
+                _make(OP_ROLLUP_ITEM, _nodes(expression))
+                if not isinstance(expression, Expression)
+                else _node(expression)
+                for expression in self._expressions))
+
 
 Cube = _define_leaf_type('Cube', Rollup, _opcode=OP_CUBE)
 
 
-class Window(Expression):
+class Window(_Node):
     __slots__ = ('_node_handle', '_partition', '_order_by', '_frame', '_start', '_end',
-        '_exclude', '_identity')
+        '_exclude')
 
-    def __init__(self, partition=(), order_by=None, frame=None, start=None,
+    def __init__(self, partition, order_by=None, frame=None, start=None,
             end=0, exclude=None):
         super().__init__()
-        self._identity = _next_identity()
         self._partition = None
         self._order_by = None
         self._frame = None
@@ -2072,6 +2161,10 @@ class Window(Expression):
         self.start = start
         self.end = end
         self.exclude = exclude
+
+    @property
+    def _identity(self):
+        return id(self)
 
     @property
     def partition(self):
@@ -2160,25 +2253,44 @@ class Window(Expression):
 
 
 class Order(Expression):
-    __slots__ = ('_node_handle', 'expression',)
+    __slots__ = ('_node_handle', '_expression',)
     _sql = ''
 
     def __init__(self, expression):
         super().__init__()
-        if not isinstance(expression, (Expression, Query)):
-            raise ValueError("invalid expression: %r" % (expression,))
+        self._expression = None
         self.expression = expression
-        self._node_handle = _make(
-            OP_ORDER, (expression._handle(),), 0, 0, self._sql)
+
+    @property
+    def expression(self):
+        return self._expression
+
+    @expression.setter
+    def expression(self, value):
+        if not isinstance(value, (Expression, SelectQuery)):
+            raise ValueError("invalid expression: %r" % (value,))
+        self._expression = value
+
+    def _handle(self):
+        return _make(
+            OP_ORDER, (self._expression._handle(),), 0, 0, self._sql)
 
 
 Asc = _define_leaf_type('Asc', Order, _sql='ASC')
 Desc = _define_leaf_type('Desc', Order, _sql='DESC')
 
 
-class NullOrder(Order):
-    __slots__ = ()
+class NullOrder(Expression):
+    __slots__ = ('_node_handle', 'expression')
     _sql = ''
+
+    def __init__(self, expression):
+        super().__init__()
+        self.expression = expression
+
+    def _handle(self):
+        return _make(
+            OP_ORDER, (_node(self.expression),), 0, 0, self._sql)
 
     def _case_values(self):
         raise NotImplementedError
@@ -2257,8 +2369,10 @@ class As(Expression):
         super().__init__()
         self.expression = expression
         self.output_name = output_name
-        self._node_handle = _make(
-            OP_AS, (_node(expression),), 0, 0, output_name)
+
+    def _handle(self):
+        return _make(
+            OP_AS, (_node(self.expression),), 0, 0, self.output_name)
 
     def __str__(self):
         return _escape_identifier(self.output_name)
@@ -2271,19 +2385,41 @@ class Cast(Expression):
         super().__init__()
         self.expression = expression
         self.typename = typename
-        self._node_handle = _make(
-            OP_CAST, (_node(expression),), 0, 0, typename)
+
+    def _handle(self):
+        return _make(
+            OP_CAST, (_node(self.expression),), 0, 0, self.typename)
 
 
 class Collate(Expression):
-    __slots__ = ('_node_handle', 'expression', 'collation')
+    __slots__ = ('_node_handle', '_expression', '_collation')
 
     def __init__(self, expression, collation):
         super().__init__()
+        self._expression = None
+        self._collation = None
         self.expression = expression
         self.collation = collation
-        self._node_handle = _make(
-            OP_COLLATE, (_node(expression),), 0, 0, collation)
+
+    @property
+    def expression(self):
+        return self._expression
+
+    @expression.setter
+    def expression(self, value):
+        self._expression = value
+
+    @property
+    def collation(self):
+        return self._collation
+
+    @collation.setter
+    def collation(self, value):
+        self._collation = value
+
+    def _handle(self):
+        return _make(
+            OP_COLLATE, (_node(self._expression),), 0, 0, self._collation)
 
 
 class AtTimeZone(Expression):
@@ -2293,8 +2429,10 @@ class AtTimeZone(Expression):
         super().__init__()
         self.expression = expression
         self.zone = zone
-        self._node_handle = _make(
-            OP_AT_TIME_ZONE, (_node(expression), _node(zone)))
+
+    def _handle(self):
+        return _make(
+            OP_AT_TIME_ZONE, (_node(self.expression), _node(self.zone)))
 
 
 class Case(Expression):
@@ -2304,9 +2442,11 @@ class Case(Expression):
         super().__init__()
         self.whens = whens
         self.else_ = kwargs.get('else_')
+
+    def _handle(self):
         kids = []
-        for condition, result in whens:
+        for condition, result in self.whens:
             kids.append(_node(condition))
             kids.append(_node(result))
         kids.append(_node(self.else_))
-        self._node_handle = _make(OP_CASE, tuple(kids), len(whens))
+        return _make(OP_CASE, tuple(kids), len(self.whens))

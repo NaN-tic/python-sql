@@ -8,8 +8,11 @@ from sql import (
     Expression, Flavor, Literal, Window, _C, _NONE, _list, _make, _node,
     _normalize_expressions)
 
-__all__ = ['Avg', 'BitAnd', 'BitOr', 'BoolAnd', 'BoolOr', 'Count', 'Every',
-    'Max', 'Min', 'Stddev', 'Sum', 'Variance']
+_EXPORTED_NAMES = (
+    'Avg', 'BitAnd', 'BitOr', 'BoolAnd', 'BoolOr', 'Count', 'Every',
+    'Max', 'Min', 'Stddev', 'Sum', 'Variance',
+)
+__all__ = list(_EXPORTED_NAMES)
 
 OP_AGGREGATE = _C['OP_AGGREGATE']
 OP_STAR = _C['OP_STAR']
@@ -131,7 +134,8 @@ class _Star(Expression):
     __slots__ = ('_node_handle',)
 
     def __init__(self):
-        super().__init__(_make(OP_STAR))
+        super().__init__()
+        self._node_handle = _make(OP_STAR)
 
 
 class Count(Aggregate):

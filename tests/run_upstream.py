@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import os
 import sys
 import unittest
 from pathlib import Path

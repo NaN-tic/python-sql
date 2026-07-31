@@ -10,7 +10,8 @@ from sql import (
     _C, _NONE, Expression, Flavor, FromItem, Window, _list, _make,
     _MappedNode, _name_node, _node, _nodes)
 
-__all__ = ['Abs', 'Cbrt', 'Ceil', 'Degrees', 'Div', 'Exp', 'Floor', 'Ln',
+_EXPORTED_NAMES = (
+    'Abs', 'Cbrt', 'Ceil', 'Degrees', 'Div', 'Exp', 'Floor', 'Ln',
     'Log', 'Mod', 'Pi', 'Power', 'Radians', 'Random', 'Round', 'SetSeed',
     'Sign', 'Sqrt', 'Trunc', 'WidthBucket',
     'Acos', 'Asin', 'Atan', 'Atan2', 'Cos', 'Cot', 'Sin', 'Tan',
@@ -23,7 +24,9 @@ __all__ = ['Abs', 'Cbrt', 'Ceil', 'Degrees', 'Div', 'Exp', 'Floor', 'Ln',
     'StatementTimestamp', 'Timeofday', 'TransactionTimestamp',
     'AtTimeZone',
     'RowNumber', 'Rank', 'DenseRank', 'PercentRank', 'CumeDist', 'Ntile',
-    'Lag', 'Lead', 'FirstValue', 'LastValue', 'NthValue']
+    'Lag', 'Lead', 'FirstValue', 'LastValue', 'NthValue',
+)
+__all__ = list(_EXPORTED_NAMES)
 
 OP_AT_TIME_ZONE = _C['OP_AT_TIME_ZONE']
 OP_EXTRACT = _C['OP_EXTRACT']
