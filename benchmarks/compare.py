@@ -21,20 +21,13 @@ DEFAULT_PYTHON_SQL_ROOT = Path(
     )
 )
 _IMPLEMENTATION = os.environ.get("PYTHON_SQL_BENCHMARK_IMPLEMENTATION")
+IMPLEMENTATIONS = ("python_sql", "mojo_sql")
 
-if _IMPLEMENTATION == "python_sql":
-    from sql import Table as PythonTable
+if _IMPLEMENTATION in IMPLEMENTATIONS:
+    from sql import Table
     from sql.aggregate import Count
-
-    MojoTable = None
-elif _IMPLEMENTATION == "mojo_sql":
-    from sql.aggregate import Count
-    from sql import Table as MojoTable
-
-    PythonTable = None
 else:
-    PythonTable = None
-    MojoTable = None
+    Table = None
     Count = None
 
 
@@ -85,13 +78,8 @@ def _with_process_stats(report, before, after, wall_seconds):
     return report
 
 
-def _build_python_query(index: int):
-    table = PythonTable(f"user_{index:06d}")
-    return table.select(table.id, table.label, where=table.active == True)
-
-
-def _build_mojo_query(index: int):
-    table = MojoTable(f"user_{index:06d}")
+def _build_query(index: int):
+    table = Table(f"user_{index:06d}")
     return table.select(table.id, table.label, where=table.active == True)
 
 
@@ -377,35 +365,21 @@ def _name_column(table):
 
 
 def _build_query_workload(implementation, workload, argument_count):
+    if implementation not in IMPLEMENTATIONS:
+        raise ValueError(f"unknown implementation: {implementation}")
     before = _process_snapshot()
     started = time.perf_counter()
     if workload == "cold_queries":
-        if implementation == "python_sql":
-            def call(index):
-                return tuple(_build_python_query(index))
-        elif implementation == "mojo_sql":
-            def call(index):
-                return tuple(_build_mojo_query(index))
-        else:
-            raise ValueError(f"unknown implementation: {implementation}")
+        def call(index):
+            return tuple(_build_query(index))
     elif workload == "aggregate_queries":
-        if implementation == "python_sql":
-            table = PythonTable("user")
-        elif implementation == "mojo_sql":
-            table = MojoTable("user")
-        else:
-            raise ValueError(f"unknown implementation: {implementation}")
+        table = Table("user")
         select = table.select(Count(table.id))
 
         def call(_):
             return tuple(select)
     elif workload in {"simple_queries", "many_arguments"}:
-        if implementation == "python_sql":
-            table = PythonTable("user")
-        elif implementation == "mojo_sql":
-            table = MojoTable("user")
-        else:
-            raise ValueError(f"unknown implementation: {implementation}")
+        table = Table("user")
         name = _name_column(table)
         select = table.select(table.id, name)
 
@@ -440,16 +414,10 @@ def _build_query_workload(implementation, workload, argument_count):
     return call, expected, setup_report
 
 
-_IMPLEMENTATION_BUILDERS = {
-    "python_sql": _build_python_query,
-    "mojo_sql": _build_mojo_query,
-}
-
-
 def _run_implementation(args):
     if args.workload == "object_to_string":
         objects, build_report = _build_objects(
-            _IMPLEMENTATION_BUILDERS[args.implementation],
+            _build_query,
             args.objects,
         )
         parity = _object_string_digest(objects)
@@ -544,7 +512,7 @@ def _run_isolated_implementation(args, implementation: str, workload: str):
 def run_object_benchmark(args):
     implementations = {
         name: _run_isolated_implementation(args, name, "object_to_string")
-        for name in _IMPLEMENTATION_BUILDERS
+        for name in IMPLEMENTATIONS
     }
     parity_values = {
         (
@@ -586,7 +554,7 @@ def run_object_benchmark(args):
 
 
 def _workload_implementations(workload):
-    return tuple(_IMPLEMENTATION_BUILDERS)
+    return IMPLEMENTATIONS
 
 
 def run_query_benchmark(args, workload: str):
@@ -814,7 +782,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--implementation",
-        choices=tuple(_IMPLEMENTATION_BUILDERS),
+        choices=IMPLEMENTATIONS,
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args()

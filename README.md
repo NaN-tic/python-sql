@@ -31,6 +31,12 @@ Use `--python-sql-root /path/to/upstream` when the reference package is stored
 elsewhere. The benchmark only constructs and renders SQL queries; it does not
 connect to or execute them against a database.
 
+Both implementations run the same workload code and import
+`Table` and `Count` from the same `sql` module names. The controller starts
+them in separate processes and changes only `PYTHONPATH`, because the upstream
+and Mojo distributions both provide the `sql` package and cannot be imported
+side by side in one Python process.
+
 ## Installation
 
 ```bash
