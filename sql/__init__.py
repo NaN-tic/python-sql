@@ -17,7 +17,9 @@ import warnings
 from array import array
 from collections import defaultdict
 from itertools import count
+from sys import getrefcount
 from threading import current_thread, local
+from weakref import ref
 
 from . import _core
 
@@ -35,6 +37,236 @@ _PROFILE_MINIMUM_MS = float(os.environ.get('PYTHON_SQL_PROFILE_MIN_MS', '5'))
 
 _C = _core.constants()
 _next_identity = count(1).__next__
+_handle_generation = 0
+_tracking_mutations = False
+_tracked_nodes = {}
+_HANDLE_CACHE_MARKER = object()
+_HANDLE_CANDIDATE_MARKER = object()
+_HANDLE_DISABLED_MARKER = object()
+
+
+def _tracked_node_setattr(node, name, value):
+    object.__setattr__(node, name, value)
+    tracked = _tracked_nodes.get(id(node))
+    if tracked is not None and tracked[0]() is node:
+        global _handle_generation
+        _handle_generation += 1
+
+
+def _restore_default_setattr():
+    global _tracking_mutations
+    if _tracking_mutations and not _tracked_nodes:
+        _Node.__setattr__ = object.__setattr__
+        _tracking_mutations = False
+
+
+def _discard_tracked_node(reference, key):
+    current = _tracked_nodes.get(key)
+    if current is not None and current[0] is reference:
+        _tracked_nodes.pop(key, None)
+        _restore_default_setattr()
+
+
+def _retain_node(node):
+    global _tracking_mutations
+    key = id(node)
+    current = _tracked_nodes.get(key)
+    if current is not None and current[0]() is node:
+        _tracked_nodes[key] = (current[0], current[1] + 1)
+    else:
+        reference = ref(
+            node,
+            lambda current, key=key: _discard_tracked_node(current, key),
+        )
+        _tracked_nodes[key] = (reference, 1)
+    if not _tracking_mutations:
+        _Node.__setattr__ = _tracked_node_setattr
+        _tracking_mutations = True
+    return key
+
+
+def _release_node(key):
+    current = _tracked_nodes.get(key)
+    if current is None:
+        return
+    if current[1] == 1:
+        _tracked_nodes.pop(key, None)
+    else:
+        _tracked_nodes[key] = (current[0], current[1] - 1)
+    _restore_default_setattr()
+
+
+class _TrackingLease(object):
+    __slots__ = ('keys',)
+
+    def __init__(self, nodes):
+        self.keys = tuple(_retain_node(node) for node in nodes)
+
+    def __del__(self):
+        for key in self.keys:
+            _release_node(key)
+
+
+def _cached_handle(node, filter_):
+    """Return a persistent native tree for a stable retained query."""
+    # Query implementations rebuild their tree in an overridden `_handle`.
+    # Leaf expressions use `_node_handle` as the actual native value, so that
+    # slot must never be replaced with cache metadata for them.
+    if not isinstance(node, Query):
+        return node._handle()
+
+    entry = getattr(node, '_node_handle', None)
+    if (isinstance(entry, tuple)
+            and len(entry) >= 2
+            and entry[0] is _HANDLE_DISABLED_MARKER
+            and entry[1] == filter_):
+        return node._handle()
+
+    if (isinstance(entry, tuple)
+            and len(entry) == 6
+            and entry[0] is _HANDLE_CACHE_MARKER
+            and entry[1] == _handle_generation
+            and entry[2] == filter_):
+        if _containers_unchanged(entry[3]):
+            return entry[5]
+        handle = node._handle()
+        object.__setattr__(node, '_node_handle', (
+            _HANDLE_DISABLED_MARKER, filter_))
+        return handle
+
+    if (isinstance(entry, tuple)
+            and len(entry) == 3
+            and entry[0] is _HANDLE_CANDIDATE_MARKER
+            and entry[1] == filter_):
+        # Rebuild once before promotion so changes made after the first render
+        # are reflected without needing mutation tracking on the cold path.
+        handle = node._handle()
+        captured = _capture_graph(node)
+        if captured is None:
+            object.__setattr__(node, '_node_handle', (
+                _HANDLE_DISABLED_MARKER, filter_))
+            return handle
+        containers, dependencies = captured
+        lease = _TrackingLease(dependencies)
+        object.__setattr__(node, '_node_handle', (
+            _HANDLE_CACHE_MARKER,
+            _handle_generation,
+            filter_,
+            containers,
+            lease,
+            handle,
+        ))
+        return handle
+
+    if (isinstance(entry, tuple)
+            and entry
+            and entry[0] is _HANDLE_CACHE_MARKER
+            and len(entry) >= 3
+            and entry[2] == filter_):
+        # A retained graph changed while it was being cached. Keep subsequent
+        # renders on the original path and release its mutation-tracking lease.
+        handle = node._handle()
+        object.__setattr__(node, '_node_handle', (
+            _HANDLE_DISABLED_MARKER, filter_))
+        return handle
+
+    handle = node._handle()
+    try:
+        object.__setattr__(node, '_node_handle', (
+            _HANDLE_CANDIDATE_MARKER,
+            filter_,
+            handle,
+        ))
+    except AttributeError:
+        pass
+    return handle
+
+
+def _container_state(container):
+    return tuple(container)
+
+
+def _same_value(current, expected):
+    if expected is None or isinstance(
+            expected, (bool, int, float, str, bytes)):
+        return type(current) is type(expected) and current == expected
+    return current is expected
+
+
+def _container_unchanged(container, state):
+    if len(container) != len(state):
+        return False
+    for current, expected in zip(container, state):
+        if not _same_value(current, expected):
+            return False
+    return True
+
+
+def _capture_graph(root):
+    """Capture small containers and nodes reachable from a retained query."""
+    containers = []
+    nodes = []
+    seen = set()
+    item_count = 0
+
+    def visit(value):
+        marker = id(value)
+        if marker in seen:
+            return True
+
+        if isinstance(value, _Node):
+            seen.add(marker)
+            nodes.append(value)
+            if isinstance(value, list) and not visit_container(value):
+                return False
+            for klass in type(value).__mro__:
+                slots = getattr(klass, '__slots__', ())
+                if isinstance(slots, str):
+                    slots = (slots,)
+                for name in slots:
+                    if name in {'__weakref__', '_node_handle'}:
+                        continue
+                    try:
+                        child = getattr(value, name)
+                    except AttributeError:
+                        continue
+                    if not visit(child):
+                        return False
+            return True
+
+        if isinstance(value, (list, array)):
+            seen.add(marker)
+            return visit_container(value)
+
+        if isinstance(value, tuple):
+            seen.add(marker)
+            for child in value:
+                if not visit(child):
+                    return False
+        return True
+
+    def visit_container(container):
+        nonlocal item_count
+        item_count += len(container)
+        if item_count > 64:
+            return False
+        containers.append((container, _container_state(container)))
+        for child in container:
+            if not visit(child):
+                return False
+        return True
+
+    if not visit(root):
+        return None
+    return tuple(containers), tuple(nodes)
+
+
+def _containers_unchanged(containers):
+    for container, state in containers:
+        if not _container_unchanged(container, state):
+            return False
+    return True
+
 
 OP_NONE = _C['OP_NONE']
 OP_NULL = _C['OP_NULL']
@@ -371,14 +603,43 @@ class _Node(object):
                     continue
                 object.__setattr__(clone, name, deepcopy(value, memo))
         if type(self)._node_handle is not self._node_handle:
-            object.__setattr__(clone, '_node_handle', self._node_handle)
+            handle = self._node_handle
+            if (isinstance(handle, tuple)
+                    and handle
+                    and handle[0] in {
+                        _HANDLE_CACHE_MARKER,
+                        _HANDLE_CANDIDATE_MARKER,
+                        _HANDLE_DISABLED_MARKER,
+                    }):
+                handle = None
+            object.__setattr__(clone, '_node_handle', handle)
         return clone
 
-    def _render(self):
+    def _render_uncached(self):
         flavor = Flavor.get()
         bindings = AliasManager._bindings()
         sql, params, aliases = _core.render(
             self._handle(), flavor._lowered(), bindings)
+        if bindings is not None:
+            AliasManager._reserve(aliases)
+        return sql, tuple(params)
+
+    def _render(self):
+        flavor = Flavor.get()
+        bindings = AliasManager._bindings()
+        entry = getattr(self, '_node_handle', None)
+        disabled = (
+            isinstance(entry, tuple)
+            and len(entry) >= 2
+            and entry[0] is _HANDLE_DISABLED_MARKER
+            and entry[1] == flavor.filter_
+        )
+        if flavor.function_mapping or disabled:
+            handle = self._handle()
+        else:
+            handle = _cached_handle(self, flavor.filter_)
+        sql, params, aliases = _core.render(
+            handle, flavor._lowered(), bindings)
         if bindings is not None:
             AliasManager._reserve(aliases)
         return sql, tuple(params)
@@ -391,16 +652,21 @@ class _Node(object):
         return self._render()[1]
 
     def __iter__(self):
+        render = (
+            self._render_uncached
+            if getrefcount(self) <= 3
+            else self._render
+        )
         if logger.isEnabledFor(logging.INFO):
             start = time.perf_counter()
-            sql, params = self._render()
+            sql, params = render()
             elapsed = (time.perf_counter() - start) * 1000
             if elapsed >= _PROFILE_MINIMUM_MS:
                 logger.info(
                     "query %s rendered in %.3f ms", type(self).__name__,
                     elapsed)
         else:
-            sql, params = self._render()
+            sql, params = render()
         yield sql
         yield params
 
